@@ -49,7 +49,7 @@ def build_business_links_kb(links: list[SocialLink]) -> InlineKeyboardMarkup:
         url = link.url_or_number
         if not url.startswith("http") and not url.startswith("tg://"):
             if any(char.isdigit() for char in url):
-                 url = "tel:" + "".join(filter(lambda x: x.isdigit() or x == '+', url))
+                 url = "https://t.me/" + "".join(filter(lambda x: x.isdigit() or x == '+', url))
             else:
                  url = f"https://{url}" # Fallback
         kb.append([InlineKeyboardButton(text=link.title, url=url)])
