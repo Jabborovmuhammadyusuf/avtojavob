@@ -41,13 +41,30 @@ async def handle_business_message(message: Message, session: AsyncSession, bot: 
         return
         
     social_links = await get_user_social_links(session, owner.user_id)
-    reply_markup = build_business_links_kb(social_links)
     
+    # Telefon raqamlarni ajratib olamiz (ularni tugma qilib bo'lmaydi)
+    phone_links = []
+    button_links = []
+    for link in social_links:
+        url = link.url_or_number
+        if not url.startswith("http") and not url.startswith("tg://") and any(c.isdigit() for c in url):
+            phone_links.append(link)
+        else:
+            button_links.append(link)
+            
+    reply_markup = build_business_links_kb(button_links)
+
+    text_to_send = auto_reply.greeting_text or ""
+    if phone_links:
+        text_to_send += "\n\n📞 <b>Aloqa uchun:</b>\n"
+        for p in phone_links:
+            text_to_send += f"• {p.title}: <code>{p.url_or_number}</code>\n"
+
     try:
         if auto_reply.media_type == "text":
             await bot.send_message(
                 chat_id=message.chat.id, 
-                text=auto_reply.greeting_text, 
+                text=text_to_send, 
                 reply_markup=reply_markup,
                 business_connection_id=connection_id
             )
@@ -55,7 +72,7 @@ async def handle_business_message(message: Message, session: AsyncSession, bot: 
             await bot.send_photo(
                 chat_id=message.chat.id,
                 photo=auto_reply.media_file_id,
-                caption=auto_reply.greeting_text,
+                caption=text_to_send,
                 reply_markup=reply_markup,
                 business_connection_id=connection_id
             )
@@ -63,30 +80,28 @@ async def handle_business_message(message: Message, session: AsyncSession, bot: 
             await bot.send_video(
                 chat_id=message.chat.id,
                 video=auto_reply.media_file_id,
-                caption=auto_reply.greeting_text,
+                caption=text_to_send,
                 reply_markup=reply_markup,
                 business_connection_id=connection_id
             )
         elif auto_reply.media_type == "video_note":
-            # Video note da caption va reply_markup qo'llab-quvvatlanmasligi mumkin, lekin yuborib ko'ramiz
             await bot.send_video_note(
                 chat_id=message.chat.id,
                 video_note=auto_reply.media_file_id,
                 reply_markup=reply_markup,
                 business_connection_id=connection_id
             )
-            # Agar text ham bo'lsa
-            if auto_reply.greeting_text:
+            if text_to_send:
                 await bot.send_message(
                     chat_id=message.chat.id,
-                    text=auto_reply.greeting_text,
+                    text=text_to_send,
                     business_connection_id=connection_id
                 )
         elif auto_reply.media_type == "voice":
             await bot.send_voice(
                 chat_id=message.chat.id,
                 voice=auto_reply.media_file_id,
-                caption=auto_reply.greeting_text,
+                caption=text_to_send,
                 reply_markup=reply_markup,
                 business_connection_id=connection_id
             )
@@ -94,7 +109,7 @@ async def handle_business_message(message: Message, session: AsyncSession, bot: 
             await bot.send_document(
                 chat_id=message.chat.id,
                 document=auto_reply.media_file_id,
-                caption=auto_reply.greeting_text,
+                caption=text_to_send,
                 reply_markup=reply_markup,
                 business_connection_id=connection_id
             )
