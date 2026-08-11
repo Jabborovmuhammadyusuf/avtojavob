@@ -21,26 +21,23 @@ async def handle_business_connection(connection: BusinessConnection, session: As
 
 @router.business_message()
 async def handle_business_message(message: Message, session: AsyncSession, bot: Bot):
-    # Bu yerda biznes egasiga emas, unga yozgan mijozga xabar ketishi kerak
-    # message.from_user = xabar yozuvchi mijoz
-    # Bizning egamiz (avto-javob egasi) qaysi user? Uni connection_id orqali topamiz.
-    
+    logging.info(f"Received business_message from {message.from_user.id} in chat {message.chat.id}")
     connection_id = message.business_connection_id
     if not connection_id:
         return
         
     owner = await get_user_by_connection(session, connection_id)
     if not owner:
+        logging.warning(f"Owner not found for connection {connection_id}")
         return
 
-    # Faqat mijoz tomonidan kelgan birinchi xabarga javob berish mantiqi:
-    # Telegramning o'zi bizga business_message'ni jo'natadi. Biz har safar yubormaslik uchun kesh,
-    # yoxud bir marta ishlaydigan mantiq qilishimiz mumkin. Ammo oddiy avto-javob barcha yangi 
-    # yozishmalarga yoki user xohlagan sharoitda javob beradi (buni foydalanuvchi TG sozlamalaridan belgilaydi).
-    
-    # Avto-javob ma'lumotlarini bazadan olamiz:
+    if message.from_user.id == owner.user_id:
+        # Owner is typing, ignore
+        return
+
     auto_reply = await get_user_auto_reply(session, owner.user_id)
     if not auto_reply:
+        logging.info(f"Owner {owner.user_id} has no auto-reply set")
         return
         
     social_links = await get_user_social_links(session, owner.user_id)
