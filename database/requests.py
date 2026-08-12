@@ -1,6 +1,7 @@
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from database.models import User, AutoReply, SocialLink
+from database.models import User, AutoReply, SocialLink, RepliedCustomer
 
 async def get_or_create_user(session: AsyncSession, user_id: int, full_name: str = None) -> User:
     stmt = select(User).where(User.user_id == user_id)
@@ -61,6 +62,27 @@ async def delete_social_link(session: AsyncSession, link_id: int):
     if link:
         await session.delete(link)
         await session.commit()
+
+async def has_replied_to_customer(session: AsyncSession, owner_id: int, customer_id: int) -> bool:
+    stmt = select(RepliedCustomer).where(
+        RepliedCustomer.owner_id == owner_id,
+        RepliedCustomer.customer_id == customer_id,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+async def mark_replied_to_customer(session: AsyncSession, owner_id: int, customer_id: int) -> bool:
+    """Mijozni 'javob berilganlar' ro'yxatiga qo'shadi.
+    True qaytarsa - bu birinchi marta yozilgani va yozish muvaffaqiyatli bo'lgani,
+    False qaytarsa - poyga holati (race condition) tufayli boshqa so'rov allaqachon
+    belgilab ulgurgani (masalan mijoz tez-tez xabar yuborgan bo'lsa)."""
+    session.add(RepliedCustomer(owner_id=owner_id, customer_id=customer_id))
+    try:
+        await session.commit()
+        return True
+    except IntegrityError:
+        await session.rollback()
+        return False
 
 async def get_all_users_count(session: AsyncSession) -> int:
     stmt = select(User)
