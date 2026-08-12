@@ -2,7 +2,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
-from database.models import User, AutoReply, SocialLink, RepliedCustomer
+from database.models import User, AutoReply, SocialLink, RepliedCustomer, PremiumTariff, PremiumRequest, PremiumRequestStatus, BotSetting
 
 async def get_or_create_user(session: AsyncSession, user_id: int, full_name: str = None) -> User:
     stmt = select(User).where(User.user_id == user_id)
@@ -149,3 +149,100 @@ async def get_all_users(session: AsyncSession) -> list[User]:
     stmt = select(User)
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+# --- Tariflar (Premium Tariffs) ---
+
+async def add_tariff(session: AsyncSession, name: str, days: int, price_text: str) -> PremiumTariff:
+    tariff = PremiumTariff(name=name, days=days, price_text=price_text, is_active=True)
+    session.add(tariff)
+    await session.commit()
+    await session.refresh(tariff)
+    return tariff
+
+async def get_active_tariffs(session: AsyncSession) -> list[PremiumTariff]:
+    stmt = select(PremiumTariff).where(PremiumTariff.is_active == True)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+async def get_all_tariffs(session: AsyncSession) -> list[PremiumTariff]:
+    stmt = select(PremiumTariff)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+async def get_tariff(session: AsyncSession, tariff_id: int) -> PremiumTariff | None:
+    stmt = select(PremiumTariff).where(PremiumTariff.id == tariff_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+async def delete_tariff(session: AsyncSession, tariff_id: int):
+    tariff = await get_tariff(session, tariff_id)
+    if tariff:
+        await session.delete(tariff)
+        await session.commit()
+
+# --- Bepul sinov (Trial) ---
+
+async def grant_trial(session: AsyncSession, user_id: int, trial_days: int = 3) -> User | None:
+    """3 kunlik bepul sinovni beradi. Har bir foydalanuvchiga faqat bir marta beriladi.
+    Agar allaqachon ishlatilgan bo'lsa None qaytaradi."""
+    stmt = select(User).where(User.user_id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user or user.trial_used:
+        return None
+
+    now = datetime.utcnow()
+    base = user.premium_expires_at if (user.premium_expires_at and user.premium_expires_at > now) else now
+    user.premium_expires_at = base + timedelta(days=trial_days)
+    user.is_premium = True
+    user.trial_used = True
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+# --- Premium so'rovlar (to'lov arizalari) ---
+
+async def create_premium_request(session: AsyncSession, user_id: int, tariff_id: int) -> PremiumRequest:
+    req = PremiumRequest(user_id=user_id, tariff_id=tariff_id, status=PremiumRequestStatus.pending)
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+async def get_premium_request(session: AsyncSession, request_id: int) -> PremiumRequest | None:
+    stmt = select(PremiumRequest).where(PremiumRequest.id == request_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+async def resolve_premium_request(session: AsyncSession, request_id: int, approve: bool, admin_id: int) -> PremiumRequest | None:
+    """So'rovni tasdiqlaydi yoki rad etadi. Faqat 'pending' holatdagi so'rovlar
+    qayta ishlanadi - shu orqali bir nechta admin bir vaqtda bosib qolsa ham
+    ikki marta premium berilib ketmaydi."""
+    req = await get_premium_request(session, request_id)
+    if not req or req.status != PremiumRequestStatus.pending:
+        return None
+
+    req.status = PremiumRequestStatus.approved if approve else PremiumRequestStatus.rejected
+    req.resolved_by = admin_id
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+# --- Bot sozlamalari (masalan: karta raqami) ---
+
+async def get_setting(session: AsyncSession, key: str) -> str | None:
+    stmt = select(BotSetting).where(BotSetting.key == key)
+    result = await session.execute(stmt)
+    setting = result.scalar_one_or_none()
+    return setting.value if setting else None
+
+async def set_setting(session: AsyncSession, key: str, value: str):
+    stmt = select(BotSetting).where(BotSetting.key == key)
+    result = await session.execute(stmt)
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = value
+    else:
+        setting = BotSetting(key=key, value=value)
+        session.add(setting)
+    await session.commit()
