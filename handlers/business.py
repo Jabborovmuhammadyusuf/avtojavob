@@ -4,7 +4,7 @@ from aiogram.exceptions import TelegramAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
-from database.requests import update_user_connection, get_user_by_connection, get_user_auto_reply, get_user_social_links
+from database.requests import update_user_connection, get_user_by_connection, get_user_auto_reply, get_user_social_links, get_or_create_user, has_replied_to_customer, mark_replied_to_customer
 from keyboards.user_kb import build_business_links_kb
 
 router = Router()
@@ -12,6 +12,13 @@ router = Router()
 @router.business_connection()
 async def handle_business_connection(connection: BusinessConnection, session: AsyncSession):
     user_id = connection.user_chat_id
+    # Foydalanuvchi bazada mavjud emasligi mumkin (agar u botga /start bosmasdan
+    # to'g'ridan-to'g'ri Telegram Business orqali ulagan bo'lsa). Shu sabab
+    # avval qatorni yaratib olamiz, aks holda keyingi UPDATE hech narsaga
+    # ta'sir qilmay, connection_id saqlanmay qolardi.
+    full_name = connection.user.full_name if connection.user else None
+    await get_or_create_user(session, user_id, full_name)
+
     if connection.is_enabled:
         logging.info(f"User {user_id} enabled business connection: {connection.id}")
         await update_user_connection(session, user_id, connection.id)
@@ -39,7 +46,21 @@ async def handle_business_message(message: Message, session: AsyncSession, bot: 
     if not auto_reply:
         logging.info(f"Owner {owner.user_id} has no auto-reply set")
         return
-        
+
+    # Shu mijozga (message.from_user.id) shu owner nomidan avval javob
+    # berilgan bo'lsa, qayta yubormaymiz - faqat birinchi murojaatga javob beramiz.
+    already_replied = await has_replied_to_customer(session, owner.user_id, message.from_user.id)
+    if already_replied:
+        logging.info(f"Customer {message.from_user.id} already got the auto-reply for owner {owner.user_id}")
+        return
+
+    # Yozib qo'yishni xabar yuborishdan oldin qilamiz - shunda mijoz tez-tez
+    # xabar yozib yuborsa ham (masalan bir necha xabarni ketma-ket), ikkinchi
+    # marta yuborilib yubormaydi.
+    is_first_time = await mark_replied_to_customer(session, owner.user_id, message.from_user.id)
+    if not is_first_time:
+        return
+
     social_links = await get_user_social_links(session, owner.user_id)
     
     # Telefon raqamlarni ajratib olamiz (ularni tugma qilib bo'lmaydi)
