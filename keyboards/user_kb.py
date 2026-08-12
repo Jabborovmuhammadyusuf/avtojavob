@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from database.models import SocialLink
+from database.models import SocialLink, PremiumTariff
 
 def get_user_main_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -12,8 +12,28 @@ def get_user_main_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔗 Tugmalar qo'shish", callback_data="user_setup_links")
             ],
             [
+                InlineKeyboardButton(text="💎 Premium olish", callback_data="user_premium_menu")
+            ],
+            [
                 InlineKeyboardButton(text="👤 Profil va Holat", callback_data="user_profile")
             ]
+        ]
+    )
+
+def get_premium_menu_kb(tariffs: list[PremiumTariff], trial_available: bool) -> InlineKeyboardMarkup:
+    kb = []
+    if trial_available:
+        kb.append([InlineKeyboardButton(text="🎁 3 kunlik bepul sinov", callback_data="premium_trial")])
+    for tariff in tariffs:
+        kb.append([InlineKeyboardButton(text=f"{tariff.name} — {tariff.price_text}", callback_data=f"premium_tariff_{tariff.id}")])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def get_tariff_payment_kb(tariff_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ To'ladim", callback_data=f"premium_pay_{tariff_id}")],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="user_premium_menu")]
         ]
     )
 
