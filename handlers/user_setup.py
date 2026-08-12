@@ -4,7 +4,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.requests import get_or_create_user, get_user_auto_reply, set_user_auto_reply, get_user_social_links, add_social_link, delete_social_link
+from database.requests import get_or_create_user, get_user_auto_reply, set_user_auto_reply, get_user_social_links, add_social_link, delete_social_link, check_and_sync_premium
 from keyboards.user_kb import get_user_main_kb, get_social_platforms_kb, get_manage_links_kb
 from states.user_states import UserSetup, UserSocialLink
 from services.onboarding import ONBOARDING_TEXT
@@ -126,12 +126,20 @@ async def process_url(message: Message, state: FSMContext, session: AsyncSession
 
 @router.callback_query(F.data == "user_profile")
 async def user_profile(call: CallbackQuery, session: AsyncSession):
-    user = await get_or_create_user(session, call.from_user.id)
+    # Profil ochilganda muddati tugagan premiumni darhol Freemiumga tushiramiz.
+    user = await check_and_sync_premium(session, call.from_user.id)
+    if not user:
+        user = await get_or_create_user(session, call.from_user.id, call.from_user.full_name)
+
     status = "👑 Premium" if user.is_premium else "🆓 Freemium"
+    expiry_line = ""
+    if user.is_premium and user.premium_expires_at:
+        expiry_line = f"\nMuddati: <b>{user.premium_expires_at.strftime('%Y-%m-%d')}</b> gacha"
+
     text = (
         f"<b>👤 Profil ma'lumotlari:</b>\n\n"
         f"ID: <code>{user.user_id}</code>\n"
-        f"Tarif: <b>{status}</b>\n"
+        f"Tarif: <b>{status}</b>{expiry_line}\n"
         f"Business ulanish: {'✅ Faol' if user.connection_id else '❌ Ulanmagan'}"
     )
     await call.message.edit_text(text, reply_markup=get_user_main_kb())
