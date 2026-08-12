@@ -4,8 +4,15 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.requests import get_or_create_user, get_user_auto_reply, set_user_auto_reply, get_user_social_links, add_social_link, delete_social_link, check_and_sync_premium
-from keyboards.user_kb import get_user_main_kb, get_social_platforms_kb, get_manage_links_kb
+from core.config import config
+from core.loader import bot
+from database.requests import (
+    get_or_create_user, get_user_auto_reply, set_user_auto_reply, get_user_social_links,
+    add_social_link, delete_social_link, check_and_sync_premium,
+    get_active_tariffs, get_tariff, grant_trial, create_premium_request, get_setting
+)
+from keyboards.user_kb import get_user_main_kb, get_social_platforms_kb, get_manage_links_kb, get_premium_menu_kb, get_tariff_payment_kb
+from keyboards.admin_kb import get_premium_request_kb
 from states.user_states import UserSetup, UserSocialLink
 from services.onboarding import ONBOARDING_TEXT
 
@@ -17,6 +24,8 @@ async def start_user(message: Message, session: AsyncSession):
     text = (
         f"Salom, <b>{message.from_user.full_name}</b>!\n"
         "Men ko'p foydalanuvchili Telegram Business Avto-javob botiman.\n\n"
+        f"Sizning ID raqamingiz: <code>{message.from_user.id}</code>\n"
+        "<i>(Premium tarif so'rash uchun shu ID'ni administratorga yuboring)</i>\n\n"
         "Meni o'z hisobingizga ulash va avto-javoblarni sozlash uchun quyidagi menyudan foydalaning."
     )
     await message.answer(text, reply_markup=get_user_main_kb())
@@ -143,3 +152,86 @@ async def user_profile(call: CallbackQuery, session: AsyncSession):
         f"Business ulanish: {'✅ Faol' if user.connection_id else '❌ Ulanmagan'}"
     )
     await call.message.edit_text(text, reply_markup=get_user_main_kb())
+
+# --- Premium olish oqimi ---
+
+@router.callback_query(F.data == "user_premium_menu")
+async def premium_menu(call: CallbackQuery, session: AsyncSession):
+    user = await check_and_sync_premium(session, call.from_user.id)
+    if not user:
+        user = await get_or_create_user(session, call.from_user.id, call.from_user.full_name)
+
+    tariffs = await get_active_tariffs(session)
+    trial_available = not user.trial_used
+
+    lines = ["<b>💎 Premium tariflar</b>\n"]
+    if user.is_premium and user.premium_expires_at:
+        lines.append(f"Joriy holat: 👑 Premium ({user.premium_expires_at.strftime('%Y-%m-%d')} gacha)\n")
+    if trial_available:
+        lines.append("🎁 Hali sinov muddatidan foydalanmagansiz - bepul 3 kunlik sinovni faollashtiring!")
+    if not tariffs:
+        lines.append("\nHozircha tariflar qo'shilmagan. Keyinroq qayta urinib ko'ring.")
+
+    await call.message.edit_text("\n".join(lines), reply_markup=get_premium_menu_kb(tariffs, trial_available))
+
+@router.callback_query(F.data == "premium_trial")
+async def premium_trial(call: CallbackQuery, session: AsyncSession):
+    user = await grant_trial(session, call.from_user.id, trial_days=3)
+    if not user:
+        return await call.answer("❗️ Siz sinov muddatidan avval foydalanib bo'lgansiz.", show_alert=True)
+
+    await call.answer()
+    await call.message.edit_text(
+        f"🎉 Tabriklaymiz! Sizga <b>3 kunlik bepul Premium</b> faollashtirildi.\n"
+        f"Muddati: <b>{user.premium_expires_at.strftime('%Y-%m-%d')}</b> gacha.",
+        reply_markup=get_user_main_kb()
+    )
+
+@router.callback_query(F.data.startswith("premium_tariff_"))
+async def premium_tariff_details(call: CallbackQuery, session: AsyncSession):
+    tariff_id = int(call.data.split("_")[2])
+    tariff = await get_tariff(session, tariff_id)
+    if not tariff:
+        return await call.answer("Bu tarif topilmadi.", show_alert=True)
+
+    card_number = await get_setting(session, "card_number")
+    card_line = f"<code>{card_number}</code>" if card_number else "Karta raqami hali kiritilmagan, admin bilan bog'laning."
+
+    text = (
+        f"<b>{tariff.name}</b>\n"
+        f"Muddati: {tariff.days} kun\n"
+        f"Narxi: <b>{tariff.price_text}</b>\n\n"
+        f"💳 To'lov uchun karta raqami:\n{card_line}\n\n"
+        "To'lovni amalga oshirgach, pastdagi \"✅ To'ladim\" tugmasini bosing. "
+        "So'rovingiz administratorga yuboriladi va tasdiqlangach premium avtomatik faollashadi."
+    )
+    await call.message.edit_text(text, reply_markup=get_tariff_payment_kb(tariff.id))
+
+@router.callback_query(F.data.startswith("premium_pay_"))
+async def premium_pay(call: CallbackQuery, session: AsyncSession):
+    tariff_id = int(call.data.split("_")[2])
+    tariff = await get_tariff(session, tariff_id)
+    if not tariff:
+        return await call.answer("Bu tarif topilmadi.", show_alert=True)
+
+    req = await create_premium_request(session, call.from_user.id, tariff.id)
+
+    await call.answer()
+    await call.message.edit_text(
+        "✅ So'rovingiz qabul qilindi!\nAdministrator to'lovni tekshirib, tez orada premiumingizni faollashtiradi.",
+        reply_markup=get_user_main_kb()
+    )
+
+    admin_text = (
+        "💰 <b>Yangi premium so'rovi!</b>\n\n"
+        f"Foydalanuvchi: {call.from_user.full_name} (@{call.from_user.username or '—'})\n"
+        f"ID: <code>{call.from_user.id}</code>\n"
+        f"Tarif: <b>{tariff.name}</b> — {tariff.price_text} ({tariff.days} kun)\n\n"
+        "To'lov tushganini tekshirib, quyidagi tugmalardan birini tanlang:"
+    )
+    for admin_id in config.admin_ids_list:
+        try:
+            await bot.send_message(admin_id, admin_text, reply_markup=get_premium_request_kb(req.id))
+        except Exception:
+            # Admin botni bloklagan yoki chat topilmadi - qolgan adminlarga yuborishni davom ettiramiz.
+            pass
