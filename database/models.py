@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Boolean, DateTime, String, Text, ForeignKey, Enum
+from sqlalchemy import BigInteger, Boolean, DateTime, String, Text, ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from datetime import datetime
 import enum
@@ -48,3 +48,15 @@ class SocialLink(Base):
     url_or_number: Mapped[str] = mapped_column(String)
 
     user: Mapped["User"] = relationship(back_populates="social_links")
+
+class RepliedCustomer(Base):
+    """Bitta biznes egasi (owner) uchun qaysi mijozlarga avtojavob
+    allaqachon yuborilganini saqlaydi, shu orqali har bir mijozga
+    faqat birinchi murojaatida bir marta javob beriladi."""
+    __tablename__ = "replied_customers"
+    __table_args__ = (UniqueConstraint("owner_id", "customer_id", name="uq_owner_customer"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    customer_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    replied_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
