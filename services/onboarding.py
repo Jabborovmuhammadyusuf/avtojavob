@@ -4,7 +4,7 @@ ONBOARDING_TEXT = """
 1. O'zingizning Telegram sozlamalaringizga (Settings) kiring.
 2. <b>Telegram Business</b> bo'limini tanlang (Faqat Premium obunachilar uchun mavjud).
 3. <b>Chatbots (Chat botlar)</b> bo'limiga kiring.
-4. Ushbu botning username'ini (masalan @avtojavob_bot) qidiruvga yozing va tanlang.
+4. Ushbu botning username'ini (masalan @avtojavobpremiumbot) qidiruvga yozing va tanlang.
 5. "Chatlarga ulanish" (Connect to chats) ga ruxsat bering va kimlarga javob berishini sozlang (Masalan: faqat yangi chatlarga).
 
 Shundan so'ng, ushbu bot sizga yozgan foydalanuvchilarga sizning nomingizdan avtomatik javob beradi!
