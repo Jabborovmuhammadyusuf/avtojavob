@@ -1,6 +1,7 @@
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta
 from database.models import User, AutoReply, SocialLink, RepliedCustomer
 
 async def get_or_create_user(session: AsyncSession, user_id: int, full_name: str = None) -> User:
@@ -83,6 +84,61 @@ async def mark_replied_to_customer(session: AsyncSession, owner_id: int, custome
     except IntegrityError:
         await session.rollback()
         return False
+
+async def grant_premium(session: AsyncSession, user_id: int, days: int) -> User | None:
+    """Foydalanuvchiga `days` kunlik premium beradi.
+    Agar foydalanuvchida hali muddati tugamagan premium bo'lsa, muddatga
+    qo'shib boradi (uzaytiradi), aks holda hozirgi vaqtdan boshlab hisoblaydi.
+    Kelajakda to'lov tizimi (Click/Payme) integratsiya qilinganda ham
+    shu funksiya webhook orqali chaqirilishi mumkin."""
+    stmt = select(User).where(User.user_id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        return None
+
+    now = datetime.utcnow()
+    base = user.premium_expires_at if (user.premium_expires_at and user.premium_expires_at > now) else now
+    user.premium_expires_at = base + timedelta(days=days)
+    user.is_premium = True
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+async def check_and_sync_premium(session: AsyncSession, user_id: int) -> User | None:
+    """Foydalanuvchi profilini ochganda/chaqirilganda muddati tugagan
+    premiumni darhol Freemiumga tushiradi."""
+    stmt = select(User).where(User.user_id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        return None
+
+    if user.is_premium and user.premium_expires_at and user.premium_expires_at <= datetime.utcnow():
+        user.is_premium = False
+        await session.commit()
+        await session.refresh(user)
+    return user
+
+async def downgrade_expired_premiums(session: AsyncSession) -> int:
+    """Fon rejimidagi (background) vazifa uchun: muddati tugagan barcha
+    premiumlarni birdaniga Freemiumga tushiradi. Nechta foydalanuvchi
+    tushirilganini qaytaradi."""
+    stmt = select(User).where(User.is_premium == True, User.premium_expires_at <= datetime.utcnow())
+    result = await session.execute(stmt)
+    expired_users = list(result.scalars().all())
+
+    for user in expired_users:
+        user.is_premium = False
+
+    if expired_users:
+        await session.commit()
+    return len(expired_users)
+
+async def get_premium_users_count(session: AsyncSession) -> int:
+    stmt = select(User).where(User.is_premium == True)
+    result = await session.execute(stmt)
+    return len(list(result.scalars().all()))
 
 async def get_all_users_count(session: AsyncSession) -> int:
     stmt = select(User)
